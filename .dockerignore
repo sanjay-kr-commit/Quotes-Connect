@@ -1,0 +1,12 @@
+**/build
+**/.gradle
+.git
+.gitignore
+local.properties
+dist
+*.zip
+*.jks
+*.p12
+*.pfx
+secrets
+server/config

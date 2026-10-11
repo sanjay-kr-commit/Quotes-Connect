@@ -1,0 +1,2514 @@
+<USER_REQUEST>
+# Quotes Connect — Antigravity Remediation & Polish Specification
+
+> **Purpose:** This document is the execution specification for bringing the current Quotes Connect codebase from its audited state to a coherent, secure, production-grade implementation.
+>
+> **Audience:** Antigravity / autonomous coding agent working directly in the repository.
+>
+> **Primary instruction:** Do not treat this as a checklist of isolated bugs. Treat it as a product, architecture, security, and UX reconciliation task. Preserve the project's core philosophy while fixing contradictions, incomplete implementations, security boundary failures, and the parts of the UI that currently feel like an engineering dashboard instead of a finished product.
+
+---
+
+# 0. Mission
+
+Quotes Connect is a privacy-first, graph-oriented knowledge and conversation system.
+
+The product is built around:
+
+- passages / quotes as first-class objects
+- explicit relationships between objects
+- people / authors as first-class identities
+- tags and semantic grouping without a recommendation algorithm
+- a Billboard-style public discovery surface
+- graph traversal and contextual exploration
+- sovereign user identity
+- encrypted local keystores
+- encrypted peer communication
+- an encrypted relay used for transport coordination rather than plaintext key exchange
+- explicit user-controlled relationships
+- multiplatform clients
+- Compose Multiplatform
+- Ktor
+- SQLDelight
+- Kotlin / Gradle
+
+The implementation must preserve these principles.
+
+The objective is **not** to redesign Quotes Connect into a conventional social network, recommendation engine, feed reader, or generic notes application.
+
+The objective is:
+
+> **Make the existing idea trustworthy, coherent, secure, visually mature, and internally consistent.**
+
+---
+
+# 1. First Rule: Inspect Before Modifying
+
+Before writing code:
+
+1. Read every project-level Markdown specification.
+2. Read:
+   - `README.md`
+   - `plan.md`
+   - `completed.md`
+   - security / hardening documentation
+   - architecture documentation
+   - UI documentation
+   - any TODO / FIXME / audit files
+3. Inspect the complete source tree.
+4. Inspect Gradle configuration and dependency declarations.
+5. Inspect:
+   - shared code
+   - Android
+   - desktop
+   - JS
+   - WasmJS
+   - server
+   - web UI
+   - database / SQLDelight
+   - crypto
+   - networking
+   - chat
+   - identity
+   - keystore
+   - graph
+6. Search globally for:
+   - TODO
+   - FIXME
+   - Unsupported
+   - placeholder
+   - mock
+   - fake
+   - temporary
+   - fallback
+   - TODO security
+   - `PUB-WEB`
+   - `PRIV-WEB`
+   - plaintext
+   - `http://`
+   - anonymous
+   - principal
+   - authorization
+   - key
+   - keystore
+   - token
+   - UUID
+7. Build a dependency / call graph around security-sensitive functions.
+8. Identify every platform-specific implementation of shared interfaces.
+9. Identify every HTTP endpoint and its authorization rule.
+10. Identify every client route and its corresponding UI state.
+
+Do not begin by blindly patching the first error found.
+
+Create an internal implementation map first.
+
+---
+
+# 2. Absolute Engineering Rules
+
+These rules override convenience.
+
+## 2.1 Never fake security
+
+Never use:
+
+- placeholder public keys
+- placeholder private keys
+- fake signatures
+- fake encryption
+- pseudo-random IDs presented as cryptographic keys
+- `PUB-WEB-*`
+- `PRIV-WEB-*`
+- Base64 encoding presented as encryption
+- hashes presented as encryption
+- client-supplied identity as authentication
+- unauthenticated ephemeral server keys presented as MITM protection
+
+If a secure primitive is unavailable on a platform:
+
+1. implement a real platform-specific primitive,
+2. use a well-maintained cryptographic implementation,
+3. or fail closed.
+
+Never silently downgrade.
+
+---
+
+## 2.2 Never silently weaken the security model
+
+A secure operation must not become plaintext merely because:
+
+- the secure transport failed,
+- the platform lacks an implementation,
+- a key is unavailable,
+- a token is missing,
+- the browser cannot access a native API,
+- a server endpoint is easier to call without authentication.
+
+Explicit failure is preferable to insecure success.
+
+---
+
+## 2.3 Identity is not authorization
+
+Never trust:
+
+```text
+authorId
+userId
+senderId
+ownerId
+principalId
+```
+
+because the client supplied it.
+
+The server must derive authenticated identity from the authenticated session / credential.
+
+If an endpoint modifies private state:
+
+```text
+authenticated principal
+        ↓
+authorized resource
+        ↓
+operation
+```
+
+must be enforced server-side.
+
+---
+
+## 2.4 Documentation must describe reality
+
+Do not update documentation merely to claim a feature is implemented.
+
+Every statement such as:
+
+- implemented
+- supported
+- encrypted
+- authenticated
+- multiplatform
+- persistent
+- secure
+
+must correspond to working code.
+
+If a feature is incomplete, mark it as incomplete.
+
+---
+
+# 3. Critical Security Remediation
+
+These are priority-zero items.
+
+---
+
+## 3.1 Fix the missing `LocalChatKeyStore`
+
+The current client references `LocalChatKeyStore`, but the audited archive does not contain the required implementation.
+
+Determine the intended abstraction from all call sites.
+
+Implement it as a proper platform-aware secure storage abstraction.
+
+It must support:
+
+- chat identity key storage
+- encrypted-at-rest key material
+- retrieval
+- creation
+- deletion / rotation where appropriate
+- key versioning
+- corruption detection
+- locked/unlocked state
+- explicit failure
+
+Do not duplicate key-store logic across screens.
+
+Recommended conceptual API:
+
+```kotlin
+interface LocalChatKeyStore {
+    suspend fun getIdentity(): ChatIdentity?
+    suspend fun createIdentity(): ChatIdentity
+    suspend fun storeIdentity(identity: ChatIdentity)
+    suspend fun deleteIdentity()
+    suspend fun isInitialized(): Boolean
+}
+```
+
+Adapt to the existing architecture rather than blindly copying this API.
+
+---
+
+# 4. Real Cryptographic Identity
+
+Define one authoritative cryptographic identity model.
+
+At minimum distinguish:
+
+```text
+User Identity
+    ↓
+Signing Identity
+    ↓
+Encryption / Key Agreement Identity
+    ↓
+Session Keys
+```
+
+Do not collapse unrelated cryptographic concepts into one UUID.
+
+Document:
+
+- key type
+- algorithm
+- encoding
+- generation
+- persistence
+- rotation
+- recovery
+- revocation
+- public key publication
+- fingerprint representation
+- trust establishment
+
+The system must make it possible to answer:
+
+> Who owns this key?
+
+and:
+
+> Why should I trust that this public key belongs to this identity?
+
+---
+
+# 5. Web Crypto Must Be Real
+
+The embedded web application currently has placeholder cryptographic values.
+
+Remove all fake key generation.
+
+Use actual browser cryptography where available, preferably Web Crypto APIs or a vetted cryptographic library.
+
+Requirements:
+
+- actual key generation
+- actual key agreement
+- actual encryption
+- actual decryption
+- actual signing if required
+- actual signature verification if required
+- correct binary encoding
+- no secrets placed in URLs
+- no private keys transmitted to the server
+- no private keys logged
+- no private keys persisted in plaintext localStorage
+
+If Web Crypto cannot support a required primitive, isolate that limitation explicitly and design the browser protocol around primitives it actually supports.
+
+Do not pretend unsupported primitives work.
+
+---
+
+# 6. Fix Web Keystore Unlock
+
+The current web keystore unlock path is not sufficient if it only accepts a passphrase and then treats encrypted bytes as plaintext or performs no real decryption.
+
+Implement a real encrypted keystore lifecycle.
+
+Recommended model:
+
+```text
+passphrase
+    ↓
+KDF
+    ↓
+key-encryption-key
+    ↓
+decrypt encrypted keystore
+    ↓
+validate authenticated encryption
+    ↓
+load identity
+```
+
+Use a modern password-based key derivation function appropriate for the platform.
+
+Use authenticated encryption.
+
+Store:
+
+- KDF parameters
+- salt
+- nonce / IV
+- ciphertext
+- authentication tag where applicable
+- format version
+
+Never store:
+
+- plaintext private keys
+- plaintext passphrases
+- recoverable passphrases
+- private keys in logs
+
+Wrong passphrase must produce a clean failure.
+
+Corrupt ciphertext must produce a clean failure.
+
+---
+
+# 7. Key Logging Policy
+
+This is a hard rule.
+
+## Never log:
+
+- private keys
+- secret keys
+- session keys
+- decrypted keystore contents
+- passphrases
+- raw shared secrets
+- key exchange payloads
+- authentication tokens
+- private identity material
+
+Not even in:
+
+- debug logs
+- exception messages
+- analytics
+- crash reports
+- HTTP traces
+- database debug output
+- test snapshots
+
+Public key fingerprints may be logged only where useful and safe.
+
+---
+
+# 8. Peer Key Exchange Architecture
+
+The intended architecture is:
+
+```text
+Peer A
+   │
+   │ encrypted session establishment
+   ▼
+Server relay
+   │
+   │ encrypted relay channel
+   ▼
+Peer B
+```
+
+The server is a transport facilitator.
+
+It must not become the place where plaintext key material is exchanged.
+
+## Required properties
+
+Both peers must be active when the exchange is explicitly initiated.
+
+The exchange should be session-oriented.
+
+The server should relay encrypted protocol messages.
+
+The server must not receive:
+
+```text
+plaintext private keys
+plaintext session keys
+plaintext shared secrets
+```
+
+The system must not require:
+
+```text
+peer A → direct IP → peer B
+```
+
+The intended model is an encrypted relay channel rather than direct IP-to-IP communication.
+
+---
+
+# 9. Relay Protocol
+
+Define an explicit protocol version.
+
+For example:
+
+```text
+RelaySession
+    sessionId
+    protocolVersion
+    initiator
+    responder
+    createdAt
+    expiresAt
+    state
+```
+
+Messages should have explicit types.
+
+For example:
+
+```text
+HELLO
+KEY_OFFER
+KEY_RESPONSE
+AUTH_PROOF
+READY
+PAYLOAD
+CLOSE
+ERROR
+```
+
+Every message should be:
+
+- versioned
+- authenticated where appropriate
+- encrypted where appropriate
+- bounded in size
+- associated with a session
+- rejected after expiry
+- rejected if sent by the wrong participant
+
+Do not make the relay an opaque bag of arbitrary JSON.
+
+---
+
+# 10. Relay Authorization
+
+A relay session must bind to exactly the intended participants.
+
+Example conceptual rule:
+
+```text
+session A ↔ B
+
+A may send only as A
+B may send only as B
+everyone else is rejected
+```
+
+Do not trust:
+
+```text
+senderId
+recipientId
+participantId
+```
+
+without validating them against the authenticated session.
+
+---
+
+# 11. HTTP MITM Protection
+
+The existing documentation claims protection that is stronger than the current implementation provides.
+
+Fix the trust model.
+
+An ephemeral server public key is not sufficient protection if the client has no authentic trust anchor.
+
+Define one of these explicitly:
+
+### Option A: Certificate / public-key pinning
+
+The client knows an expected server identity.
+
+### Option B: Trusted bootstrap key
+
+A long-lived trusted public key signs ephemeral session keys.
+
+### Option C: OS / browser trust infrastructure
+
+Use authenticated TLS correctly and explain what it protects.
+
+Do not claim:
+
+> MITM protected
+
+unless there is an actual trust chain.
+
+Document the exact threat model.
+
+---
+
+# 12. Remove Plaintext Fallback
+
+Search for every occurrence of:
+
+```text
+https → http
+secure transport → plaintext
+encrypted → unencrypted
+```
+
+Remove silent downgrade behavior.
+
+If a secure channel cannot be established:
+
+```text
+show explicit error
+do not continue insecurely
+```
+
+For development-only environments, any insecure mode must be:
+
+- explicit
+- opt-in
+- visibly marked
+- impossible to enable accidentally in production builds
+
+---
+
+# 13. Server Authorization Audit
+
+Perform a complete endpoint-by-endpoint authorization review.
+
+Create a table internally:
+
+| Endpoint | Read/Write | Authentication | Resource Owner | Authorization |
+|---|---|---|---|---|
+
+For every private endpoint ask:
+
+1. Can an unauthenticated caller reach it?
+2. Can the caller choose the identity being modified?
+3. Can the caller choose another user's ID?
+4. Can the caller modify another user's keystore?
+5. Can the caller publish as another user?
+6. Can the caller delete another user's data?
+7. Can the caller open a relay session for another identity?
+8. Can the caller impersonate a chat participant?
+
+Fix every instance of:
+
+```kotlin
+if (principal != null && principal != suppliedId)
+```
+
+when the intended behavior is:
+
+```text
+authentication required
+AND
+authenticated identity == resource owner
+```
+
+---
+
+# 14. Keystore Server Storage
+
+The server may store an **encrypted user keystore**.
+
+The server must not possess the plaintext private keys.
+
+Recommended model:
+
+```text
+Client
+  ↓
+encrypt keystore locally
+  ↓
+encrypted blob
+  ↓
+server storage
+```
+
+Server stores:
+
+```text
+userId
+keystoreVersion
+ciphertext
+salt
+nonce
+metadata
+createdAt
+updatedAt
+```
+
+Server does not store:
+
+```text
+plaintext private key
+passphrase
+KDF-derived decryption key
+plaintext identity secrets
+```
+
+---
+
+# 15. Keystore UX
+
+The keystore must be understandable to a normal user.
+
+### Locked state
+
+Show:
+
+- lock icon
+- “Identity locked”
+- what is unavailable
+- unlock action
+
+Do not expose cryptographic jargon unnecessarily.
+
+### Unlocking
+
+Show:
+
+```text
+Unlock your identity
+Your private keys remain encrypted on this device.
+```
+
+Then:
+
+- password field
+- show/hide control
+- unlock button
+- error state
+- retry behavior
+
+### Wrong password
+
+Use a calm, explicit message:
+
+```text
+Unable to unlock the identity.
+Check your password and try again.
+```
+
+Do not reveal whether a particular key exists.
+
+### Destructive actions
+
+Deleting identity material must require explicit confirmation.
+
+---
+
+# 16. Platform Crypto Audit
+
+Audit every implementation of `PlatformCrypto`.
+
+The audited project currently has platforms where secure operations fail with `UnsupportedSecureOperation`.
+
+Resolve the mismatch between:
+
+```text
+documentation says supported
+```
+
+and:
+
+```text
+implementation says unsupported
+```
+
+For each target:
+
+- Android
+- JVM/Desktop
+- JS
+- WasmJS
+
+record:
+
+```text
+key generation
+key agreement
+encryption
+decryption
+signing
+verification
+secure storage
+randomness
+```
+
+Do not mark a capability supported until it works.
+
+---
+
+# 17. Multiplatform Capability Matrix
+
+Create a single source of truth.
+
+Example:
+
+| Capability | Android | Desktop | JS | Wasm |
+|---|---:|---:|---:|---:|---:|
+| Key generation | ✓ | ✓ | ✓ | ✓ |
+| Encryption | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Decryption | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Signing | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Secure storage | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Do not fill this table until verified.
+
+If a capability genuinely cannot be implemented on a target, document it and prevent unsupported flows from appearing in the UI.
+
+---
+
+# 18. Eliminate Duplicate Web Architectures
+
+The repository contains a Compose web surface and a substantial embedded HTML/JavaScript application.
+
+This creates drift.
+
+Choose one authoritative UI architecture.
+
+Preferred direction:
+
+> Compose Multiplatform should be the primary product UI.
+
+If embedded HTML/JS is retained:
+
+- define exactly why
+- isolate it
+- prevent duplicated business logic
+- share API/domain models
+- share authentication state
+- share security state
+- share routing definitions where possible
+
+Do not maintain two independently evolving products.
+
+---
+
+# 19. UI Redesign Objective
+
+The UI currently communicates:
+
+> “developer tool for a graph database”
+
+when it should communicate:
+
+> “quiet, personal, interconnected library of ideas and people.”
+
+The UI should feel:
+
+- editorial
+- calm
+- spatial
+- intentional
+- monochrome
+- tactile
+- private
+- slightly archival
+- modern without becoming generic SaaS
+
+Preserve the existing visual identity where good.
+
+Do not replace everything with a generic Material dashboard.
+
+---
+
+# 20. Core UI Hierarchy
+
+Every screen should establish:
+
+```text
+1. What am I looking at?
+2. Why does it matter?
+3. What is connected to it?
+4. What can I do next?
+```
+
+Do not lead with:
+
+- UUID
+- internal type
+- database ID
+- protocol state
+- raw timestamps
+- security implementation details
+
+unless the user explicitly opens technical details.
+
+---
+
+# 21. Information Architecture
+
+Recommended primary navigation:
+
+```text
+Billboard
+Explore
+Search
+Library
+Chat
+Identity
+Settings
+```
+
+Possible secondary navigation:
+
+```text
+Recent
+Saved
+Following
+Tags
+Authors
+Connections
+```
+
+Avoid 10+ equal-weight navigation destinations.
+
+---
+
+# 22. Billboard
+
+Billboard should feel like a public wall of interesting passages.
+
+It should not look like:
+
+```text
+GET /passages
+```
+
+Cards should prioritize:
+
+```text
+passage
+author
+source
+context
+relationship hints
+```
+
+De-emphasize:
+
+```text
+UUID
+database metadata
+raw object type
+```
+
+Interaction:
+
+- open passage
+- open author
+- follow relationship
+- save
+- inspect connections
+- continue traversal
+
+---
+
+# 23. Passage Detail
+
+This should become one of the strongest screens in the product.
+
+Structure:
+
+```text
+Author
+────────────
+
+“Passage text…”
+
+Source / work
+
+────────────────
+
+Connected to
+[Passage] [Author] [Tag]
+
+────────────────
+
+Context
+...
+
+────────────────
+
+Actions
+Save
+Connect
+Share
+Open graph
+```
+
+The passage itself should dominate.
+
+Do not bury it inside a metadata panel.
+
+---
+
+# 24. Passage Inspector
+
+Create a dedicated inspector component.
+
+Sections:
+
+### Identity
+
+- human-readable title
+- type
+- fingerprint / ID only where relevant
+
+### Content
+
+- passage
+
+### Attribution
+
+- author
+- source
+- date
+
+### Relationships
+
+- connected passages
+- related authors
+- tags
+
+### Security
+
+Collapsed by default.
+
+Show:
+
+- identity state
+- verification state
+- encryption state
+
+Technical information should be available but not visually dominant.
+
+---
+
+# 25. Visual Graph Canvas
+
+This is a major missing product piece.
+
+Implement a local graph visualization.
+
+It does not need to become a giant physics simulation.
+
+Start with:
+
+```text
+                Author
+                  │
+                  │
+        Tag ── Passage ── Passage
+                  │
+                  │
+                Source
+```
+
+Requirements:
+
+- pan
+- zoom
+- node selection
+- relationship highlighting
+- center selected node
+- open object
+- keyboard navigation where practical
+- graceful empty state
+- bounded graph depth
+- readable labels
+
+Do not render 500 nodes at once.
+
+Default to:
+
+```text
+current node
++ direct connections
++ optionally one additional hop
+```
+
+---
+
+# 26. Graph Visual Language
+
+Node type should be visually distinguishable without relying only on color.
+
+Use:
+
+- shape
+- typography
+- iconography
+- subtle borders
+
+Example:
+
+```text
+Passage    rounded rectangle
+Author     circular node
+Tag        pill
+Source     rectangular node
+Chat       distinct conversation marker
+```
+
+Keep it monochrome or near-monochrome.
+
+Do not turn it into a colorful knowledge graph cliché.
+
+---
+
+# 27. Search
+
+Search must become navigation, not merely filtering.
+
+Search should support:
+
+```text
+passage text
+author
+source
+tag
+ID / fingerprint
+```
+
+Results should be grouped:
+
+```text
+Passages
+Authors
+Sources
+Tags
+```
+
+Search result should show enough context to distinguish similar items.
+
+Do not make the user open multiple objects just to discover what a result is.
+
+---
+
+# 28. Search UX
+
+Include:
+
+- instant search where feasible
+- empty state
+- no-result state
+- keyboard shortcut
+- recent searches if appropriate
+- clear control
+- highlighted match
+- result grouping
+- result count only where useful
+
+Do not overload the search interface with filters.
+
+Progressive disclosure.
+
+---
+
+# 29. Identity UX
+
+Identity should feel like a personal vault.
+
+Concept:
+
+```text
+Your Identity
+
+● Unlocked
+
+Your identity is stored locally
+and protected by your keystore.
+
+[Lock]
+
+Security
+────────────────
+Key fingerprint
+Devices
+Sessions
+
+Danger Zone
+────────────────
+Delete identity
+```
+
+The screen should not read like a cryptography admin panel.
+
+---
+
+# 30. Chat UX
+
+The chat system should expose the product promise without exposing protocol machinery.
+
+Normal user should see:
+
+```text
+Conversation
+Peer name / identity
+Messages
+Connection state
+Encryption indicator
+```
+
+Technical protocol details belong behind:
+
+```text
+Connection details
+```
+
+The user should not need to understand:
+
+- relay packet
+- ephemeral key
+- transport frame
+- session nonce
+
+unless they intentionally inspect security details.
+
+---
+
+# 31. Chat Connection States
+
+Design explicit states:
+
+```text
+Offline
+Connecting
+Waiting for peer
+Secure channel established
+Peer disconnected
+Connection expired
+Authentication failed
+Security error
+```
+
+Each state needs:
+
+- visual indicator
+- plain-language explanation
+- next action
+
+Never leave the user staring at a spinner.
+
+---
+
+# 32. Security UI
+
+Security should be visible but quiet.
+
+Use a hierarchy:
+
+```text
+Normal:
+small lock / shield indicator
+
+Important:
+inline explanation
+
+Advanced:
+expandable technical details
+```
+
+Do not put a giant “ENCRYPTED” banner on every screen.
+
+Security becomes more trustworthy when it is calm and specific.
+
+---
+
+# 33. UUID / Technical Metadata Policy
+
+UUIDs remain important internally.
+
+They should not dominate the visual design.
+
+Preferred:
+
+```text
+Passage
+“The quote…”
+
+Albert Camus
+The Myth of Sisyphus
+```
+
+Advanced:
+
+```text
+Object ID
+8b7...
+Fingerprint
+...
+```
+
+Never:
+
+```text
+8b7c8...
+PASSAGE
+created=...
+updated=...
+```
+
+as the primary visual hierarchy.
+
+---
+
+# 34. Typography
+
+Use typography to establish hierarchy.
+
+Recommended:
+
+```text
+Display
+    large passage text
+
+Title
+    object title
+
+Metadata
+    author / source
+
+Body
+    descriptions
+
+Technical
+    IDs / fingerprints
+```
+
+Keep line length controlled.
+
+Passage text should be comfortable to read.
+
+Do not let cards become walls of tiny metadata.
+
+---
+
+# 35. Spacing
+
+Introduce a deliberate spacing scale.
+
+Example:
+
+```text
+4
+8
+12
+16
+24
+32
+48
+64
+```
+
+Do not use arbitrary padding everywhere.
+
+Normalize:
+
+- card padding
+- section spacing
+- page margins
+- list gaps
+- dialog spacing
+
+---
+
+# 36. Components
+
+Create reusable components rather than repeating UI logic.
+
+Minimum shared component family:
+
+```text
+QcTopBar
+QcSidebar
+QcPage
+QcSection
+QcCard
+PassageCard
+AuthorCard
+TagChip
+ObjectBadge
+SecurityBadge
+IdentityStatus
+EmptyState
+ErrorState
+LoadingState
+SearchField
+SearchResult
+GraphCanvas
+GraphNode
+GraphEdge
+Inspector
+ChatMessage
+ChatConnectionState
+ConfirmDialog
+```
+
+Adapt names to existing conventions.
+
+---
+
+# 37. States Are Part of the Design
+
+Every major component needs:
+
+```text
+Loading
+Empty
+Error
+Success
+Disabled
+Locked
+Unauthenticated
+Unavailable
+```
+
+A polished application is not only the happy path.
+
+Design these deliberately.
+
+---
+
+# 38. Empty States
+
+Never show a blank screen.
+
+Examples:
+
+### Empty library
+
+```text
+Nothing here yet.
+
+Save a passage and it will appear in your library.
+```
+
+### Empty graph
+
+```text
+This object has no visible connections yet.
+
+Create or discover a relationship to grow the graph.
+```
+
+### No search results
+
+```text
+Nothing matched that search.
+
+Try an author, passage, tag, or source.
+```
+
+---
+
+# 39. Error Handling
+
+Replace raw exceptions with user-safe errors.
+
+Bad:
+
+```text
+IllegalStateException(...)
+```
+
+Good:
+
+```text
+We couldn't establish a secure connection.
+Try again.
+```
+
+Technical details may be available under:
+
+```text
+Details
+```
+
+Never expose:
+
+- stack traces
+- cryptographic secrets
+- internal database paths
+- SQL
+- tokens
+
+---
+
+# 40. Accessibility
+
+Audit every UI surface.
+
+Requirements:
+
+- keyboard navigation
+- focus indicators
+- semantic labels
+- sufficient contrast
+- screen-reader-friendly controls
+- no emoji as the only semantic indicator
+- buttons must have accessible names
+- dialogs must trap focus correctly
+- graph nodes need accessible alternatives
+
+For graph visualization, provide a list representation or accessible object navigator.
+
+The graph must not become inaccessible content.
+
+---
+
+# 41. Embedded Web UI Cleanup
+
+If the legacy embedded web UI remains:
+
+- eliminate inline styles
+- eliminate repetitive inline event handlers
+- move CSS into structured styles
+- use semantic HTML
+- centralize event handling
+- centralize state transitions
+- remove dead CSS
+- remove duplicated logic
+- remove placeholder crypto
+- add accessibility semantics
+
+The audited UI contains roughly thousands of lines, hundreds of inline styles, and many inline click handlers. This should be treated as technical debt, not ignored.
+
+---
+
+# 42. State Architecture
+
+Audit state ownership.
+
+Avoid:
+
+```text
+screen owns domain state
+screen owns network state
+screen owns crypto state
+screen owns database state
+```
+
+Prefer:
+
+```text
+Repository
+    ↓
+Use Case / Controller
+    ↓
+State Holder / ViewModel
+    ↓
+Composable UI
+```
+
+The exact architecture should follow the project's existing conventions.
+
+Do not introduce needless frameworks.
+
+---
+
+# 43. Database / SQLDelight Audit
+
+Inspect all schemas and queries.
+
+Verify:
+
+- primary keys
+- foreign keys
+- indexes
+- uniqueness
+- cascade behavior
+- migrations
+- nullable fields
+- timestamps
+- serialization
+- transaction boundaries
+
+Especially audit relationships.
+
+The project's graph model must not rely on fragile object references.
+
+Objects should retain stable IDs.
+
+Relationships should resolve through IDs.
+
+---
+
+# 44. Graph Integrity
+
+Validate:
+
+```text
+A → B
+```
+
+only when both nodes exist or the domain explicitly permits unresolved references.
+
+Handle:
+
+- deleted target
+- missing source
+- stale relationship
+- duplicate edge
+- self-edge
+- circular relationship
+- orphaned node
+
+Circular graphs are allowed where the product model permits them.
+
+Do not force a tree model onto a graph model.
+
+---
+
+# 45. Algorithm-Free Principle
+
+Do not introduce:
+
+- recommendation ranking
+- engagement ranking
+- “people you may like”
+- popularity sorting
+- opaque personalization
+
+unless explicitly part of the product specification.
+
+Discovery should remain:
+
+```text
+explicit relationships
+tags
+search
+Billboard
+subscriptions
+traversal
+user action
+```
+
+The graph is the discovery mechanism.
+
+---
+
+# 46. Billboard Integrity
+
+Billboard should not become a hidden algorithmic feed.
+
+If ordering is required, make it deterministic and documented.
+
+Possible signals:
+
+- chronological
+- explicitly promoted
+- subscribed
+- manually curated
+
+Avoid mysterious ranking.
+
+---
+
+# 47. Networking Audit
+
+Audit:
+
+- request authentication
+- TLS
+- timeouts
+- retries
+- connection lifecycle
+- cancellation
+- payload size
+- serialization
+- error mapping
+- replay behavior
+- idempotency
+- rate limiting
+- server validation
+
+No endpoint should trust the client more than necessary.
+
+---
+
+# 48. Server Security Hardening
+
+Implement:
+
+- request size limits
+- relay message limits
+- session expiry
+- idle timeout
+- authentication timeout
+- rate limiting
+- abuse controls
+- input validation
+- structured logging without secrets
+
+Do not log sensitive payloads.
+
+---
+
+# 49. Chat Security Testing
+
+Create tests for:
+
+1. A connects to B.
+2. B connects to A.
+3. A sends encrypted message.
+4. B decrypts message.
+5. Server cannot decrypt message.
+6. Third participant cannot inject message.
+7. Wrong participant cannot impersonate A.
+8. Expired relay session rejects messages.
+9. Replay attempt is rejected.
+10. Modified ciphertext is rejected.
+11. Wrong key is rejected.
+12. Disconnect cleans up session state.
+
+---
+
+# 50. Keystore Testing
+
+Test:
+
+- create
+- lock
+- unlock
+- wrong password
+- corrupted ciphertext
+- missing keystore
+- duplicate initialization
+- rotation
+- deletion
+- recovery behavior
+- concurrent access
+- persistence after restart
+
+---
+
+# 51. Authorization Testing
+
+For every private endpoint test:
+
+```text
+no auth
+wrong user
+correct user
+expired credential
+malformed credential
+resource does not exist
+resource belongs to another user
+```
+
+Expected behavior must be explicit.
+
+---
+
+# 52. Cross-Platform Testing
+
+Do not only test JVM/Desktop.
+
+At minimum verify:
+
+```text
+Desktop
+Android
+JS
+WasmJS
+Server
+```
+
+For each target:
+
+- compile
+- run relevant tests
+- exercise supported crypto
+- exercise persistence
+- exercise navigation
+- exercise security states
+
+If the environment cannot build a target, document that limitation rather than declaring it complete.
+
+---
+
+# 53. Build Integrity
+
+Fix Gradle/build issues.
+
+Verify:
+
+```text
+./gradlew test
+./gradlew build
+```
+
+and relevant platform tasks.
+
+If Gradle needs to download a version unavailable in the environment, do not claim the build passed.
+
+Record:
+
+```text
+Build attempted
+Environment limitation
+Static verification performed
+```
+
+---
+
+# 54. Dependency Hygiene
+
+Audit dependencies for:
+
+- unused libraries
+- duplicate libraries
+- insecure versions
+- platform mismatch
+- unnecessary crypto implementations
+- abandoned dependencies
+
+Do not add dependencies simply to make architecture easier.
+
+Every security-sensitive dependency should have a clear justification.
+
+---
+
+# 55. Documentation Reconciliation
+
+After implementation:
+
+Update:
+
+```text
+README.md
+plan.md
+completed.md
+security documentation
+architecture documentation
+```
+
+Rules:
+
+- implemented means tested
+- planned means not implemented
+- partial means partially implemented
+- unsupported means intentionally unsupported
+
+Remove stale claims.
+
+---
+
+# 56. Add an Architecture Decision Record for Crypto
+
+Document:
+
+```text
+Why this cryptographic algorithm?
+Why this KDF?
+Why this key format?
+Why this relay architecture?
+Why is the server unable to decrypt?
+What is the threat model?
+What does TLS protect?
+What does TLS not protect?
+How are identities trusted?
+How are keys rotated?
+```
+
+This prevents future agents from accidentally weakening the model.
+
+---
+
+# 57. Threat Model
+
+Write a concise threat model.
+
+Threats include:
+
+- malicious server
+- compromised relay
+- network observer
+- MITM
+- malicious client
+- impersonation
+- replay
+- stolen device
+- stolen encrypted keystore
+- malicious participant
+- database compromise
+- log leakage
+
+For each:
+
+```text
+Threat
+Mitigation
+Remaining risk
+```
+
+Do not claim protection against threats the architecture does not actually solve.
+
+---
+
+# 58. Product Polish Pass
+
+After security and correctness are fixed, perform a dedicated visual pass.
+
+Do not mix this with backend patching.
+
+Audit every screen for:
+
+- hierarchy
+- density
+- alignment
+- typography
+- spacing
+- interaction feedback
+- empty states
+- error states
+- loading states
+- accessibility
+- responsive behavior
+- desktop window sizes
+- mobile dimensions
+- web layout
+- dark/light mode if supported
+
+---
+
+# 59. Visual Consistency
+
+Create tokens for:
+
+```text
+colors
+typography
+spacing
+radii
+elevation
+borders
+motion
+icons
+```
+
+Use tokens consistently.
+
+Avoid one-off values.
+
+The visual language should feel designed rather than accumulated.
+
+---
+
+# 60. Motion
+
+Use subtle motion for:
+
+- navigation
+- expanding inspector
+- graph selection
+- connection state changes
+- loading
+- message arrival
+
+Avoid:
+
+- excessive bouncing
+- decorative animation
+- slow transitions
+- animation that delays interaction
+
+Motion should explain state.
+
+---
+
+# 61. Responsive Layout
+
+Desktop:
+
+```text
+sidebar
+content
+inspector
+```
+
+Tablet:
+
+```text
+compact navigation
+content
+optional inspector
+```
+
+Mobile:
+
+```text
+top bar
+content
+bottom / contextual navigation
+inspector as sheet
+```
+
+Do not simply shrink the desktop UI.
+
+---
+
+# 62. Mobile Priority
+
+On mobile prioritize:
+
+1. passage
+2. author
+3. source
+4. relationships
+5. action
+
+Technical metadata goes behind secondary actions.
+
+---
+
+# 63. Desktop Priority
+
+On desktop take advantage of space.
+
+Use:
+
+```text
+navigation | object | context
+```
+
+The inspector and graph can remain visible without crowding the main object.
+
+---
+
+# 64. Graph Interaction
+
+The graph should support:
+
+```text
+click node
+    ↓
+highlight
+    ↓
+inspector updates
+    ↓
+open object
+```
+
+Do not require the user to navigate away from the graph for every relationship.
+
+The graph should become a way of thinking through the data.
+
+---
+
+# 65. Object Navigation
+
+Every object should support:
+
+```text
+Open
+Inspect
+Traverse
+Search
+Copy stable identifier
+```
+
+Where appropriate:
+
+```text
+Save
+Connect
+Share
+Follow
+```
+
+Keep actions contextual.
+
+Do not show every action on every object.
+
+---
+
+# 66. Security Details as Progressive Disclosure
+
+Example:
+
+```text
+Secure connection
+    ✓ Encrypted
+```
+
+Tap:
+
+```text
+Connection details
+
+Protocol
+Session
+Peer identity
+Key fingerprint
+Trust state
+```
+
+This is much better than permanently exposing protocol internals.
+
+---
+
+# 67. Remove Technical Noise
+
+Review every visible:
+
+```text
+UUID
+enum name
+database field
+HTTP status
+internal class name
+serialization field
+crypto primitive
+```
+
+Ask:
+
+> Does the user need this here?
+
+If no:
+
+- remove it
+- move it to advanced details
+- or expose it only in developer/debug mode
+
+---
+
+# 68. Product Language
+
+Use human language.
+
+Prefer:
+
+```text
+Connect
+Unlock
+Save
+Explore
+Open graph
+```
+
+instead of:
+
+```text
+InitializeSession
+DecryptKeystore
+TraverseRelations
+FetchPassage
+```
+
+Internal terminology can remain internal.
+
+---
+
+# 69. No Fake Completeness
+
+Do not mark a task complete because:
+
+- code compiles partially
+- a button exists
+- a screen exists
+- a placeholder returns data
+- a mock key exists
+- a TODO was renamed
+- documentation says complete
+
+A feature is complete only when:
+
+```text
+implementation
++ integration
++ error handling
++ security
++ UI
++ tests
++ documentation
+```
+
+are aligned.
+
+---
+
+# 70. Recommended Execution Order
+
+Execute in this order.
+
+## Phase 0 — Baseline
+
+- inspect repository
+- map architecture
+- map endpoints
+- map crypto
+- map UI
+- establish build/test baseline
+- record environment limitations
+
+**Deliverable:** baseline audit report.
+
+---
+
+## Phase 1 — Security Foundations
+
+Fix:
+
+- LocalChatKeyStore
+- real cryptographic identity
+- web crypto
+- real keystore decryption
+- key logging
+- server authorization
+- plaintext fallback
+- relay authorization
+- trust model
+
+**Do not proceed to declaring the product secure until this phase is complete.**
+
+---
+
+## Phase 2 — Relay / Chat Correctness
+
+Implement:
+
+- session model
+- participant binding
+- encrypted relay protocol
+- expiry
+- replay resistance
+- message integrity
+- lifecycle cleanup
+- chat keystore integration
+
+---
+
+## Phase 3 — Multiplatform Correctness
+
+Resolve:
+
+- JS crypto
+- Wasm crypto
+- secure storage
+- capability matrix
+- unsupported states
+
+---
+
+## Phase 4 — Architecture Cleanup
+
+- eliminate duplicated web architecture where possible
+- centralize domain state
+- centralize crypto
+- centralize networking
+- centralize authorization
+- clean SQLDelight boundaries
+- remove dead code
+
+---
+
+## Phase 5 — UI Foundation
+
+Implement:
+
+- design tokens
+- navigation
+- typography
+- spacing
+- reusable components
+- loading states
+- empty states
+- error states
+- accessibility primitives
+
+---
+
+## Phase 6 — Core Experience
+
+Prioritize:
+
+1. Billboard
+2. Passage detail
+3. Passage inspector
+4. Search
+5. Identity
+6. Chat
+7. Graph
+
+---
+
+## Phase 7 — Visual Graph
+
+Build the local graph canvas.
+
+Keep it focused and readable.
+
+---
+
+## Phase 8 — Responsive / Accessibility
+
+Test:
+
+- desktop
+- tablet
+- mobile
+- web
+- keyboard
+- screen reader semantics
+
+---
+
+## Phase 9 — Final Hardening
+
+Run:
+
+- unit tests
+- integration tests
+- security tests
+- authorization tests
+- crypto tests
+- UI tests
+- migration tests
+- build verification
+
+---
+
+## Phase 10 — Documentation
+
+Only after implementation is verified:
+
+- update README
+- update plan
+- update completed
+- update security documentation
+- update architecture docs
+- add threat model
+- add crypto ADR
+- record remaining limitations
+
+---
+
+# 71. Definition of Done
+
+The project is ready for release only when all of the following are true.
+
+## Security
+
+- [ ] No fake cryptographic keys.
+- [ ] No private key logging.
+- [ ] No plaintext security fallback.
+- [ ] Server authorization is enforced from authenticated identity.
+- [ ] Relay participants are authenticated and bound.
+- [ ] Encrypted keystore is actually encrypted and decryptable.
+- [ ] Web crypto is real.
+- [ ] Trust model is documented.
+- [ ] Threat model is documented.
+
+## Architecture
+
+- [ ] No missing core classes.
+- [ ] No undocumented duplicate architectures.
+- [ ] Shared crypto abstraction is coherent.
+- [ ] Platform implementations are accurate.
+- [ ] Database relationships are validated.
+- [ ] Graph model remains graph-shaped.
+
+## UI
+
+- [ ] Passage is the primary visual object.
+- [ ] UUIDs are secondary.
+- [ ] Graph is navigable.
+- [ ] Search is useful.
+- [ ] Identity feels understandable.
+- [ ] Chat hides protocol complexity.
+- [ ] Loading/empty/error states exist.
+- [ ] Accessibility is addressed.
+- [ ] Responsive layouts exist.
+- [ ] UI uses consistent design tokens.
+
+## Product
+
+- [ ] Billboard is not an opaque recommendation feed.
+- [ ] Relationships are explicit.
+- [ ] User controls remain central.
+- [ ] Privacy model is understandable.
+- [ ] Discovery remains graph-oriented.
+- [ ] No feature contradicts the documented product philosophy.
+
+## Verification
+
+- [ ] Tests pass where environment permits.
+- [ ] Build passes where environment permits.
+- [ ] Unsupported platforms are explicitly documented.
+- [ ] Security-sensitive behavior has tests.
+- [ ] Documentation matches actual implementation.
+
+---
+
+# 72. Antigravity Operating Instructions
+
+When executing this specification:
+
+### Do not ask for confirmation for every small change.
+
+Make coherent batches of changes.
+
+### Do not rewrite the project unnecessarily.
+
+Prefer surgical improvements.
+
+### Do not preserve broken abstractions merely because they already exist.
+
+If an abstraction actively causes security or architecture problems, replace it.
+
+### Do not add visual polish on top of broken security.
+
+Security first.
+
+### Do not hide limitations.
+
+If something cannot be implemented correctly, report it.
+
+### Do not create fake implementations to make tests green.
+
+Tests must prove real behavior.
+
+### Do not weaken existing security to make UX easier.
+
+Instead improve the UX around the security model.
+
+### Do not change the project's identity.
+
+Quotes Connect should remain:
+
+> an explicit, user-controlled network of passages, people, sources, tags, and conversations.
+
+Not:
+
+> another algorithmic social feed.
+
+---
+
+# 73. Final Deliverables
+
+At completion, produce:
+
+## Code
+
+A working, internally consistent implementation.
+
+## Tests
+
+A meaningful test suite covering:
+
+- crypto
+- keystore
+- relay
+- authorization
+- persistence
+- graph integrity
+- critical UI state
+
+## Documentation
+
+Updated:
+
+```text
+README.md
+plan.md
+completed.md
+security documentation
+architecture documentation
+threat model
+crypto ADR
+```
+
+## Audit Report
+
+Create:
+
+```text
+FINAL_AUDIT.md
+```
+
+containing:
+
+```text
+What was found
+What was fixed
+What was redesigned
+What remains
+What is intentionally unsupported
+Security model
+Test results
+Build results
+Known limitations
+```
+
+## UI Review
+
+Create:
+
+```text
+UI_REVIEW.md
+```
+
+containing:
+
+```text
+Before
+After
+Design decisions
+Component inventory
+Accessibility decisions
+Responsive behavior
+Remaining polish
+```
+
+---
+
+# 74. Final Principle
+
+Do not optimize for the appearance of completion.
+
+Optimize for coherence.
+
+A secure feature that is confusing is unfinished.
+
+A beautiful feature that is insecure is unfinished.
+
+A documented feature that does not work is unfinished.
+
+A working feature that contradicts the product model is unfinished.
+
+Quotes Connect should reach the point where:
+
+```text
+Architecture
+      │
+      ├── Security
+      │
+      ├── Data model
+      │
+      ├── Networking
+      │
+      ├── Identity
+      │
+      ├── UI
+      │
+      └── Documentation
+             │
+             ▼
+        all describe
+        the same system
+```
+
+The final product should feel quiet, deliberate, trustworthy, and interconnected.
+
+The complexity should exist underneath.
+
+The user should experience the meaning, not the machinery.
+
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-06T15:21:48+05:30.
+</ADDITIONAL_METADATA>

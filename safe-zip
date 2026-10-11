@@ -1,0 +1,15 @@
+#!/bin/env sh
+rm quotes-connect.zip
+find . -type f \
+  ! -path '*/build/*' \
+  ! -path '*/.git/*' \
+  ! -path '*/.gradle/*' \
+  ! -path '*/dist/*' \
+  ! -name '*.db' \
+  ! -name '*.db-journal' \
+  ! -name '*.db-wal' \
+  ! -name '*.db-shm' \
+  ! -name '*.sqlite' \
+  ! -name '*.sqlite3' \
+  ! -name '*.zip' \
+  -exec zip quotes-connect.zip {} +

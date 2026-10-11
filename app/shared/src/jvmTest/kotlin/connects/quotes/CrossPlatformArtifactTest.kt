@@ -1,0 +1,23 @@
+package connects.quotes
+
+import connects.quotes.crypto.PlatformCrypto
+import kotlinx.coroutines.runBlocking
+import org.junit.Test
+import kotlin.test.assertEquals
+
+class CrossPlatformArtifactTest {
+
+    @Test
+    fun testWebCryptoToJvmInterop() = runBlocking {
+        val privateKeyBase64 = "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDrDgyV5fycIcERRPp/q0G29LkMgERCswNdKaXaudtRY57/jSJrXk1f3HwmsE6mo/LmqGVrnCuA/2dP8NNQY4rqo3ndXgldda4zFR4+oXdGoDFmomPVNydvTTxe6llFgl5AZ4oaRIG+ieC8eZALepizw7pjSzoxDeI84bvp1fckLxc27oiW6hBC7lkaFAFrV85ln9DWx6ZTlrm61N9UULuEpJ1dS5AgtYnSjlRaybG4dU5eSNE0sqNzlIJ8/vOyxxolKmIP6VcVuNJPfCTpqNbuPmVRkZpR5VswewmWvc02jNCoTC1VdKQx3T5BHJKsfAzKUp8GLOmnNY8I0ESCedm7AgMBAAECggEAaQ6M8nxqFLCDdcACRAibpPWpNZyopbUT9lI0hleWXkCr4mVGsn1iEMvfk30ukg1p9czjE58n1I6Ssuic0evDvY6WW6n5fpOn6b3xGCYbxO25VrmS7Eur7PO03WlZwBb+IEQGtinTYYGHeEXO60p+sK31Awcu+ZjOes6bqe5PeRRVrtSX5XZh09tKTbRwC3NsyNTFKWG4tC/VAM9A1wU6CvnLd/ZRLP+7ZXoPhtwcbwHrV33Aljec90fjrPo5irwVfDJ9/twP++cTV6OFgEOco4Hkyu3tsK1QrSX56lFrXR1ZZLlCEAk2Gt2fU/9ab9GYsoLQ9kd0fMaCKVgDgzSD2QKBgQD7ojQ/wH10M6CMHyocNyWOmsN9J5XvC75fHJY4SjRE70vrDCnvz34OPz2GNmoIIsfdJIBqJyaTRjH2snse7xMHb9nKsIolmevoePrR8+AaUMeCY0pEg+c4+y6YUrRS5UljfSiOl4Q/vxuGy/xc1I3s1Pv7N0Cg9h/U9yqaXuAKAwKBgQDvIjMit/+xRf3lcVSiy8USAc+vV0y4khAKuzk00mUQS82RtOtOvN+lGJsSNTWm/yZiU0NAga7xHx5b6D+YbzX94Qbcd0CvKmpdy3xNRtpaQc5eW/gaor57wGGmG6by4/rXxVQgo1mxHe+BvNjNiZ8xF3eMsfpKmo3KHcs4c14/6QKBgGO+hiuHJ7N6C3e/mreYfICshDUGDf61jv6wnDMv5sw0dslzBuSSQQtwsfiTdTBIaSUVpPlvD3Ftb7y0Pu2iIs7d3Vzk4b3J56M84V975idIQe1DYlsKVgtWNcAXeHcrgA25vOvYz4ldPZIPJbe+YYuxWTjZS/sB1NhcKT0Lwo71AoGAVci4+11yVk+7cxGiwPvEaF9J96ajmRqcspzTOsW3B4+J4Rk7yHUs7XbUOkXoR04EoQUpfPyIm2sEYwf/uFk8zyRoZ7JH/A6FNbyHjNk7/2DX/TWU3UlAd/hdj08gJsXt+HWLZmHzDPymLK5oP+N8vgmjE0/Nb/Hdp4Hkow2P4/ECgYB23QdlfWJ+R0+IHxiWJubY6rmKDG1La1YDYC2XdF0iglNJRjqlvRTzDASxeYt1xqOdtAV1zNnLupR6OeZu19t1uyHYdnkepvWp1dKlyVhJZKEnFWJtOs++iu/6nuSacTay6dhiaElTLi3qaUkbCyy23G2v42TL0y2EWc2G0IHgjw=="
+        val jsonPayload = """{"version": 1, "suite": "QC-RSA2048-AES256GCM-OAEP", "keyId": "test-key-id", "nonce": "lj7QCakPJAK3xy5C", "ciphertext": "LNoywfk3BVJ0uzCQ7Zwtxrj9Uhg7egyGV7AHhve689Zhj8bq7nzxgCuWegni19ySSrIRvxOMrKIjxvXydlMNXWVxkUTKjGNZikMeNIRlehhDM7ki1c8Vh+3sWthsIOpWM3kH79MsbQowfOzzEL0fC4jjyM3ODm4fHsaU5WPgF7xE1KYo8P9Iz/aeWhVLAniZSJNCwtySi0iKPyP2xMX4u5whB/oozwJ61e4tG8Pgr7/vXWj9xy+cVqoQtKJOFiQ3b0cleV3KGJIczvmTN7z7yKh7wxVSy9LyDlKI374jfdVU3tXBpGuRIT9mlm7noRRNNN1p3PxtPLe+haRjOdn+5Q==:hNyCiI+tObmrscrytwEuq3A6HK6tbjCbGG7gTSMA9jTU6dsFsbw+zmsnJhTt5vo=", "aad": "test-key-id:REQ-1234567890abcdef"}"""
+        try {
+            val decrypted = PlatformCrypto.decrypt(jsonPayload, privateKeyBase64)
+            assertEquals("""{"query":"test-cross-platform"}""", decrypted)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            System.err.println(e.cause?.message)
+            throw e
+        }
+    }
+}

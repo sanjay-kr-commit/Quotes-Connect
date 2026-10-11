@@ -1,0 +1,15 @@
+# Optional external server configuration.
+# QUOTES_* environment variables override these values.
+
+server.host=0.0.0.0
+server.port=8080
+server.protocol=HTTP
+
+database.mode=SQLITE
+database.sqlite.path=/data/quotes_connect.db
+
+tls.enabled=false
+tls.keystore=
+tls.keystore.password=
+tls.key.alias=quotesconnect
+tls.key.password=
